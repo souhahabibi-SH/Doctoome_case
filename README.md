@@ -36,6 +36,8 @@ doctoome-case/
 ├── docs/
 │   └── documentation.md        # detailed write-up of every step, finding and decision
 ├── requirements.txt
+├── presentation/
+│   └── Doctoome_case_presentation.pdf   # 15-minute C-level presentation
 └── README.md
 ```
 
