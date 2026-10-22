@@ -1,0 +1,6 @@
+duckdb==1.5.6
+pandas==3.0.6
+pyarrow==26.0.0
+matplotlib==3.11.2
+jupyter==1.1.1
+ipykernel==7.4.0
