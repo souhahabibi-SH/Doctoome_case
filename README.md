@@ -5,6 +5,10 @@ Analysis of the visitor journey on Doctoome's type 2 diabetes awareness page: da
 > **Disclaimer:** all data is synthetic. The questionnaire and its three outcome categories (`no_current_indication`, `possible_risk`, `declared_diagnosed`) are **fictional analytical categories**, not medical diagnoses or clinical recommendations.
 
 ---
+## Presentation
+
+- PDF: [presentation/Doctoome_case_presentation.pdf](presentation/Doctoome_case_presentation.pdf)
+- Canva: https://canva.link/bijeyk203kulaom
 
 ## Key findings
 
