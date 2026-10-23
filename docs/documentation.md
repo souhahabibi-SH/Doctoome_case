@@ -4,10 +4,14 @@ This document explains, phase by phase, **what was done**, **what was observed**
 
 - **Data:** 6 synthetic Parquet files (`data/`)
 - **Tools:** Python, DuckDB (SQL), pandas, matplotlib
-- **Code:** `notebook/analysis.ipynb` and `sql/02_clean_tables.sql`
+- **Code:** `notebook/analysis.ipynb`, `sql/02_clean_tables.sql`, `sql/03_data_quality_checks.sql` and `src/run_pipeline.py`
 - **Charts:** `outputs/figures/`
 
 > The data is synthetic. Outcome categories are **analytical categories**, not medical diagnoses.
+>
+> **Unit of analysis:** unless stated otherwise, every rate is **per session** (26,000 sessions from 20,000 unique visitors). Phase 5 compares sessions and unique visitors.
+>
+> **Observed vs explained:** findings describe **associations**. Possible explanations are flagged as **hypotheses**; Phase 5 tests the main ones against audience composition. None of the analyses proves a causal effect.
 
 ---
 
@@ -32,7 +36,7 @@ This document explains, phase by phase, **what was done**, **what was observed**
 
 **Findings:**
 - Column types are correct: no conversion is needed.
-- There are about 1.3 sessions per visitor: some visitors come back.
+- There are about 1.3 sessions per visitor: 17,000 visitors came once and 3,000 came 3 times. **Rates are therefore computed per session**, and checked per unique visitor in Phase 5.
 - The journey is clear: landing → start → 5 questions → result.
 - Timestamps are displayed in **UTC**. Without this setting, DuckDB displayed them in Paris time and some sessions moved to another day.
 
@@ -196,8 +200,8 @@ A flag is a **label** on a specific row. Nothing is deleted, but rows can be fil
 - **google_organic is the #1 source** (7,490 sessions), ahead of google_ads (6,375).
 - **About 10% of traffic comes from AI assistants** (chatgpt).
 - **The questionnaire takes about 1 min 40 s** (median: 98 seconds).
-- **35% of visitors leave without starting** the questionnaire.
-- **Question 4 (physical activity) is where most visitors drop off.**
+- **35% of sessions end without starting** the questionnaire.
+- **Question 4 (physical activity) is where most sessions drop off inside the questionnaire.**
 
 ---
 
@@ -210,8 +214,8 @@ Every analysis starts from **`session_summary`** (one row per session).
 
 | # | Analysis | Business question | Why it matters |
 |---|---|---|---|
-| 1 | Funnel | Where do we lose visitors? | Know **what to improve** in the page and the questionnaire |
-| 2 | Acquisition | Which channels bring visitors who complete? | Know **where to spend** the marketing budget |
+| 1 | Funnel | Where in the journey do sessions end? | Know **what to improve** in the page and the questionnaire |
+| 2 | Acquisition | Which channels bring sessions that complete? | Know **where to spend** the marketing budget |
 | 3 | Outcomes | Who gets a `possible_risk` result? | Identify the channels that reach **Doctoome's target** |
 | 4 | Trends | How does performance evolve? | Spot **trends** and **campaign effects** |
 
@@ -222,7 +226,7 @@ Every analysis starts from **`session_summary`** (one row per session).
 ## Analysis 1: The funnel
 
 ### What is a funnel?
-A **funnel** represents the visitor journey, step by step. Many people enter at the top, and at each step some leave. We measure how many visitors remain at each step to find **where we lose the most people**.
+A **funnel** represents the visitor journey, step by step. Many people enter at the top, and at each step some leave. We measure how many sessions remain at each step to find **where we lose the most people**.
 
 Doctoome's journey has 8 steps:
 **Landing → Start → Q1 → Q2 → Q3 → Q4 → Q5 → Result**
@@ -249,13 +253,13 @@ Two rates are computed:
 | Result | 11,357 | 43.7% | 99.1% | 105 |
 
 **Interpretation:**
-- At a "normal" step, about **5%** of visitors leave. A step clearly above that level signals a problem.
-- **The landing page is the biggest leak:** 35% of visitors leave without clicking "start". This is **63% of all lost visitors** (9,226 out of 14,643). The problem lies **before** the questionnaire: the page message, the button, trust, loading time.
+- At a "normal" step, about **5%** of sessions end. A step clearly above that level signals a problem.
+- **The landing page is the biggest leak:** 35% of sessions end without clicking "start". This is **63% of all lost sessions** (9,226 out of 14,643). The problem lies **before** the questionnaire; possible causes (not measurable with this data): the page message, the button, trust, loading time.
 - **Q4 is the question that drives people away:** 13.5% drop-off, almost 3× more than the other questions. It is the physical activity question, the only one with 4 options, and potentially uncomfortable ("rarely_or_never").
 - **Between start and Q1, 7.2% leave:** they click "start" without answering the first question. Q1 is directly about a medical diagnosis (a sensitive topic), or there is a display issue.
 - Once Q5 is reached, 99% see their result.
 
-**Conclusion:** out of 100 visitors, 44 reach the result. 35 are lost before they even start, and Q4 loses 3× more people than the other questions.
+**Conclusion:** out of 100 sessions, 44 reach the result (per unique visitor: 47 out of 100, see Phase 5). 35 are lost before they even start, and Q4 loses 3× more people than the other questions.
 
 ### Step 21: Funnel by device
 
@@ -277,7 +281,7 @@ Two rates are computed:
 - If Q4 were only uncomfortable, it would lose as many people on every device. Since the problem is **concentrated on mobile**, the most likely cause is **the display**: 4 options with long labels on a small screen.
 - Even on desktop, Q4 loses slightly more than the other questions (8% vs ~4%): there is also a small content effect.
 
-**Conclusion:** two thirds of visitors are on mobile, and they complete 12 points less than on desktop, mainly because of Q4. **Recommendation:** redesign Q4 for mobile. If mobile matched desktop at this question, about **700 more results** would be obtained over the period (+6%).
+**Conclusion:** two thirds of sessions are on mobile, and they complete 12 points less than on desktop, mainly because of Q4. **Hypothesis (not demonstrated):** Q4 renders poorly on small screens. Phase 5 shows that the gap is not explained by age, source or returning status. **Next step:** UX review, then A/B test of a redesigned Q4. **Scenario:** if mobile matched desktop at this question, up to about **700 more results** over the period (+6%), an upper bound under explicit assumptions.
 
 ---
 
@@ -306,9 +310,9 @@ Two rates are computed:
 | other | 2.6% | 56.8% | 37.7% |
 
 **Interpretation:**
-- **The best sources are small:** email, referral and chatgpt. These visitors know why they come (an email received, a recommendation, advice from an AI assistant): they are motivated.
+- **The best sources are small:** email, referral and chatgpt. A likely reason is intent (an email received, a recommendation, advice from an AI assistant). For email, part of the lead comes from returning sessions (77% of its sessions, see Phase 5).
 - **Paid sources perform below average:** google_ads (39%) and especially social (29%, the worst). Together they represent 38% of traffic but only 31% of results.
-- On social, half of the visitors do not even click "start": they arrive out of curiosity while scrolling, and leave.
+- On social, half of the visitors do not even click "start": a plausible explanation is that they arrive out of curiosity while scrolling.
 
 **Limitation:** campaign costs are not available, so the **cost per result** cannot be computed.
 
@@ -363,23 +367,23 @@ Two rates are computed:
 |---|---|---|---|---|---|
 | possible_risk share | 9.9% | 15.4% | 24.1% | 32.5% | **36.2%** |
 
-→ Risk **rises steadily with age** (3.5× more among 75+ than among 18-29). This is consistent with what is known about type 2 diabetes, which makes the data credible. Under-18s (28 results) are too few to conclude.
+→ Risk **rises steadily with age** (3.5× more among 75+ than among 18-29). The data is synthetic and the questionnaire is not clinically validated: this pattern describes the dataset, it does not validate it. Under-18s (28 results) are too few to conclude.
 
 **By campaign:** 45plus reaches **39.5%** possible_risk, 2× the average. It completes little, but **those who complete are far more often in the target group**.
 
-**By source:** google_ads reaches **29%** possible_risk and brings **the largest number of at-risk profiles (723)**, thanks to the 45plus campaign. Conversely, chatgpt completes well but only 14% of its completers are at risk.
+**By source:** google_ads reaches **29%** possible_risk and brings **the largest number of possible_risk results (723)**, thanks to the 45plus campaign. Conversely, chatgpt completes well but only 14% of its completers are at risk.
 
 **Interpretation:** the completion rate **alone** is not enough to judge a channel. A channel can have many completers but few relevant profiles.
 
-### Step 26: The key metric, "at-risk profiles per 100 sessions"
+### Step 26: The key metric, "possible_risk results per 100 sessions"
 
-**Why:** two figures contradicted each other (completion and risk share). **A single metric** was needed to rank channels. It answers Doctoome's real question: *"if I bring 100 people through this channel, how many at-risk profiles do I get in the end?"*
+**Why:** two figures contradicted each other (completion and risk share). **A single metric** was needed to rank channels. It answers Doctoome's real question: *"if I bring 100 people through this channel, how many possible_risk results do I get in the end?"*
 
 It combines both losses: visitors who do not complete count as 0, and completers who are not at risk also count as 0.
 
 **Example:**
-- chatgpt: 100 sessions → 53 complete → 14% at risk → **7.5 at-risk profiles**;
-- google_ads: 100 sessions → 39 complete → 29% at risk → **11.3 at-risk profiles**.
+- chatgpt: 100 sessions → 53 complete → 14% at risk → **7.5 possible_risk results**;
+- google_ads: 100 sessions → 39 complete → 29% at risk → **11.3 possible_risk results**.
 
 **Technical point (SQL pitfall):** for a session without a result, `outcome_category` is empty (`NULL`), and `AVG` **ignores** `NULL`s. Without a fix, the division was only over completed sessions. `COALESCE(..., FALSE)` makes sessions without a result count as 0.
 
@@ -396,7 +400,7 @@ It combines both losses: visitors who do not complete count as 0, and completers
 | other | 7.3 | | | |
 | **social** | **4.3** | | | |
 
-**Conclusion:** **45plus is the best channel** (14.8, i.e. 1.7× the average). **social_awareness is the worst** (4.2), 3.5× less efficient than 45plus. **Recommendation: shift budget from social_awareness to 45plus.**
+**Conclusion:** **45plus has the highest value** (14.8, i.e. 1.7× the average). **social_awareness has the lowest** (4.2), 3.5× less than 45plus. Part of this gap comes from **who** each campaign reaches: at equal age it becomes 13.0 vs 5.4 (2.4×, Phase 5). **Recommendation: test a budget shift towards 45plus**, judged on cost per result.
 
 ---
 
@@ -408,7 +412,7 @@ It combines both losses: visitors who do not complete count as 0, and completers
 
 **Result:**
 
-| Week | Sessions | Completion | At-risk profiles per 100 sessions | Mobile share |
+| Week | Sessions | Completion | possible_risk results per 100 sessions | Mobile share |
 |---|---|---|---|---|
 | 1 June | 2,194 | 40.0% | 6.7 | 64.9% |
 | 8 June | 2,369 | 41.5% | 6.9 | 63.6% |
@@ -421,7 +425,7 @@ It combines both losses: visitors who do not complete count as 0, and completers
 
 **Interpretation:**
 - **Traffic grows by 68%** in 8 weeks, accelerating in mid-July.
-- **Quality improves at the same time:** completion +7 points, at-risk profiles +46%. This is unusual: more traffic usually means less motivated visitors.
+- **Quality improves at the same time:** completion +7 points, possible_risk results +46%. Both improve at the same time.
 - **Mobile share stays stable** (~65%): the improvement does not come from devices.
 
 ### Step 28: Campaign mix over time
@@ -444,9 +448,9 @@ It combines both losses: visitors who do not complete count as 0, and completers
 - **45plus is launched the week of 29 June** and grows to about 22% of sessions.
 - **retargeting grows progressively** up to 12%.
 - **Weaker campaigns decline:** social_awareness falls from 17% to 10%.
-- **The rise in at-risk profiles coincides exactly with the 45plus launch** (7.6 → 8.9 → 10.4 per 100 sessions).
+- **The rise in possible_risk results coincides exactly with the 45plus launch** (7.6 → 8.9 → 10.4 per 100 sessions).
 
-**Conclusion:** the improvement is largely explained by the **change in marketing mix**: the July strategy worked.
+**Conclusion:** the improvement is **associated** with the change in marketing mix. Phase 5 quantifies it: the mix explains 57% of the rise, the rest comes from campaigns performing better. A causal effect of the July strategy would need a controlled test.
 **Caveat:** this is a **correlation**, not a proof. Other changes (e.g. a page improvement) may have contributed. Only an **A/B test** could prove it.
 
 ---
@@ -455,9 +459,9 @@ It combines both losses: visitors who do not complete count as 0, and completers
 
 | Analysis | Key message | Recommendation |
 |---|---|---|
-| **Funnel** | 35% leave from the landing page; Q4 loses 3× more than other questions, mostly on mobile | Rework the landing page; redesign Q4 for mobile |
+| **Funnel** | 35% leave from the landing page; Q4 loses 3× more than other questions, mostly on mobile | A/B test the landing page; investigate Q4 on mobile, then test a redesign |
 | **Acquisition** | Volume is not quality: email, referral and chatgpt complete best; social the least | Judge channels on quality, not volume |
-| **Outcomes** | 1 in 5 is `possible_risk`; risk rises with age; 45plus brings 14.8 at-risk profiles per 100 sessions vs 4.2 for social_awareness | Shift budget from social_awareness to 45plus |
+| **Outcomes** | 1 in 5 is `possible_risk`; risk rises with age; 45plus brings 14.8 possible_risk results per 100 sessions vs 4.2 for social_awareness | Test a budget shift towards 45plus (age-adjusted lead: 13.0 vs 5.4) |
 | **Trends** | Traffic +68% and quality up since the 45plus launch | Keep this direction; validate with an A/B test |
 
 ---
@@ -487,17 +491,17 @@ It combines both losses: visitors who do not complete count as 0, and completers
 
 - **What it shows:** the number of sessions still present at each step (horizontal bars), and the loss since the previous step (right column).
 - **How it is built:** horizontal bars (`barh`) from the step 20 `funnel` table; losses above 10% are written in bold orange.
-- **Interpretation:** two leaks stand out: **the landing page (−35.5%)**, which accounts for 63% of all lost visitors, and **Q4 (−13.5%)**, while other steps lose about 5%.
-- **What to do:** priority 1, convince visitors to start; priority 2, fix Q4.
+- **Interpretation:** two leaks stand out: **the landing page (−35.5%)**, which accounts for 63% of all lost sessions, and **Q4 (−13.5%)**, while other steps lose about 5%.
+- **What to do:** priority 1, get more sessions to start; priority 2, investigate Q4.
 
 ## 4.3 Chart 2: drop-off by question, mobile vs desktop
 
 ![Drop-off by device](../outputs/figures/02_dropoff_by_device.png)
 
-- **What it shows:** for each question, the % of visitors who stop there among those who reached it, on desktop (grey) and mobile (blue).
+- **What it shows:** for each question, the % of sessions that stop there among those who reached it, on desktop (grey) and mobile (blue).
 - **How it is built:** grouped bars; drop-off rate = 100 − step rate, computed in SQL by device. Tablet (5% of traffic) is excluded to keep the chart readable.
 - **Interpretation:** mobile loses slightly more at every question (+1 to +2 points), but **at Q4 the gap doubles: 16.9% vs 8.0%**. If the question were only uncomfortable, it would lose as many people on both devices: the most likely cause is **how Q4 renders on small screens** (the only question with 4 options and long labels).
-- **What to do:** redesign Q4 for mobile. Estimated gain: ~700 more results over the period (+6%).
+- **What to do:** investigate Q4 on mobile, then A/B test a redesign. Scenario: up to ~700 more results over the period (+6%, upper bound).
 
 ## 4.4 Chart 3: volume vs completion by source
 
@@ -508,30 +512,30 @@ It combines both losses: visitors who do not complete count as 0, and completers
 - **Interpretation:** the big paid sources complete below average (**google_ads 39.0%, social 28.9%**), while small sources complete best (**email 64.7%, referral 60.4%, chatgpt 52.9%**).
 - **What to do:** do not judge a channel on traffic alone.
 
-## 4.5 Chart 4: at-risk profiles per 100 sessions, by campaign
+## 4.5 Chart 4: possible_risk results per 100 sessions, by campaign
 
 ![Campaigns](../outputs/figures/04_risk_per_100_by_campaign.png)
 
 - **What it shows:** for 100 sessions brought by each campaign, how many end with a `possible_risk` result.
 - **How it is built:** reuses the `risk_per_100()` function from step 26; best campaign in blue, worst in orange, the others in grey; dashed line = average (8.8).
 - **Interpretation:** **diabetes_45plus: 14.8**, 1.7× the average; **diabetes_social_awareness: 4.2**, i.e. 3.5× less than 45plus. This metric combines both losses (those who do not complete, and completers who are not at risk).
-- **What to do:** shift budget from social_awareness to 45plus (to be confirmed with campaign costs).
+- **What to do:** test a budget shift towards 45plus, with campaign costs and a controlled comparison (age-adjusted: 13.0 vs 5.4).
 
-## 4.6 Chart 5: at-risk profiles by age group
+## 4.6 Chart 5: possible_risk results by age group
 
 ![Age](../outputs/figures/05_risk_by_age.png)
 
 - **What it shows:** among completed questionnaires, the % of `possible_risk` results by age group.
 - **How it is built:** reuses the `possible_risk_share()` function from step 25; 45+ in blue (target of the 45plus campaign); under-18s (28 results) and unknown ages are excluded.
-- **Interpretation:** the share rises steadily with age: **9.9% (18–29) → 36.2% (75+)**. This is consistent with type 2 diabetes, which makes the data credible, and it **explains chart 4**: targeting people aged 45+ mechanically brings more at-risk profiles.
+- **Interpretation:** the share rises steadily with age: **9.9% (18–29) → 36.2% (75+)**. Since the data is synthetic, this does not validate the questionnaire, but it **explains part of chart 4**: targeting people aged 45+ mechanically brings more possible_risk results.
 
 ## 4.7 Chart 6: weekly trend
 
 ![Trend](../outputs/figures/06_weekly_trend.png)
 
-- **What it shows:** top, sessions per week; bottom, at-risk profiles per 100 sessions; the orange line marks the first week of diabetes_45plus (29 June).
+- **What it shows:** top, sessions per week; bottom, possible_risk results per 100 sessions; the orange line marks the first week of diabetes_45plus (29 June).
 - **How it is built:** two stacked panels sharing the week axis (`sharex=True`), from the step 27 `weekly` table; only the 8 complete weeks.
-- **Interpretation:** **traffic +68%** (2,194 → 3,684 sessions/week) and **at-risk profiles +46%** (6.7 → 9.8). The quality jump starts the week 45plus is launched. More traffic usually means less engaged visitors; here both improve.
+- **Interpretation:** **traffic +68%** (2,194 → 3,684 sessions/week) and **possible_risk results +46%** (6.7 → 9.8). The quality jump starts the week 45plus is launched; the change in campaign mix explains 57% of the rise (Phase 5).
 - **Caution:** this is a correlation in time, not a proof; an A/B test would be needed to confirm it.
 
 ## 4.8 Why not more charts?
@@ -542,24 +546,172 @@ It combines both losses: visitors who do not complete count as 0, and completers
 
 ---
 
-# Phase 5: Answers to the four questions
+# Phase 5: Robustness checks
+
+**Why this phase?** Phases 3 and 4 describe **associations**: "mobile loses more at Q4", "45plus brings more possible_risk results". An association can come from a third variable, a **confounder**. Example: if mobile users were older, the Q4 gap could come from age, not from the device. This phase checks the main findings against the composition of the audience and separates what is **observed** from what is a **hypothesis**.
+
+**Methods used (in simple terms):**
+- **Stratification:** compare two groups *inside* each sub-group (e.g. mobile vs desktop among 18–29, then among 30–44…). If the gap is there in every sub-group, the sub-group variable does not explain it.
+- **Direct standardisation:** recompute a rate as if every group had *the same mix* (e.g. the same age mix). It answers "what would the rate be at equal age?".
+- **Mantel-Haenszel odds ratio:** one number summarising a difference across many sub-groups at once. Close to the crude odds ratio = the sub-groups do not explain the difference.
+- **Mix vs rate decomposition:** split a change over time into "the audience changed" (mix) and "each group performs differently" (rate).
+
+> None of these methods proves a causal effect; they only rule out the confounders we can observe. Only a controlled experiment (A/B test) can measure a causal effect.
+
+---
+
+## Step 36: Sessions vs unique visitors
+
+**Why:** `session_summary` has one row per **session**. 20,000 visitors made 26,000 sessions: 17,000 came once, 3,000 came 3 times. A "session rate" is therefore not a "visitor rate".
+
+| Level | Count | Never start | Reach a result | possible_risk |
+|---|---|---|---|---|
+| Per session | 26,000 | 35.5% | 43.7% | 2,276 results |
+| Per unique visitor | 20,000 | 33.5% | 47.3% | 2,190 people |
+
+**Observations:**
+- At visitor level the picture is slightly better: people who leave on a first visit sometimes come back and complete.
+- Visitors with 3 sessions behave very differently: 97.6% start and 87.6% complete at least once (vs 61.0% and 40.3% for one-visit visitors).
+- Some people completed more than once: 11,357 completions come from 9,470 people.
+
+**Decision:** every rate in the analysis is now explicitly labelled as a **session rate** ("35% of sessions end before the start", not "35% of visitors leave"). Visitor-level figures are given alongside the key ones.
+
+---
+
+## Step 37: Q4 on mobile, controlling for the audience
+
+**Why:** the reviewer rightly pointed out that the mobile/desktop gap at Q4 (16.9% vs 8.0%) could come from a different audience on mobile, not from the device itself.
+
+**Is the audience different?** Among sessions reaching Q4:
+
+| | Desktop | Mobile |
+|---|---|---|
+| Aged 45+ | 47.5% | 46.5% |
+| Paid source (google_ads, social) | 13.8% | 42.0% |
+| Returning session | 32.0% | 26.7% |
+
+Same age profile, but mobile has much more paid traffic and slightly fewer returning sessions. Both could matter, so we compare within groups.
+
+**Q4 drop-off within each group (mobile vs desktop):**
+- By age: 18–29 15.7% vs 6.6%; 30–44 17.6% vs 7.1%; 45–59 17.0% vs 9.0%; 60–74 17.7% vs 9.0%; 75+ 13.4% vs 9.5%.
+- By source: the gap is between +7 and +12.5 points for every source (e.g. google_ads 17.1% vs 8.9%, email 13.9% vs 6.7%).
+- New sessions 17.3% vs 8.1%; returning sessions 15.9% vs 7.6%.
+
+**All at once:** if mobile sessions had exactly the desktop mix of age × source × returning status, their Q4 drop-off would be **17.1%** (vs 16.9% crude). The Mantel-Haenszel odds ratio is **2.33**, almost the crude one (**2.35**). The difference is far beyond chance (z ≈ 14).
+
+**Conclusion:** the gap is **not explained by audience composition** on the variables available. It is **associated with the device**. *Why* is still a **hypothesis**: display of the only question with 4 long options, screen size, or context of use (answering on the move). Unobserved differences (browser, intent) could also play a role.
+
+**Next step:** a UX review of Q4 on small screens, then an A/B test of a redesigned Q4 on mobile only.
+
+---
+
+## Step 38: The Q4 scenario, with its assumptions
+
+**Why:** "~700 more results" was presented as a gain; it is a **scenario**.
+
+**Calculation:** 8,555 mobile sessions reach Q4. Closing the gap with desktop (16.9% → 8.0%) means 8.9% of them, about 766 sessions, would pass Q4. 93.7% of mobile sessions that answer Q4 reach a result, so about **718 more results**.
+
+| Share of the gap closed | Mobile Q4 drop-off | Extra results | vs total results |
+|---|---|---|---|
+| 25% | 14.7% | ~180 | +1.6% |
+| 50% | 12.4% | ~360 | +3.2% |
+| 100% | 8.0% | ~718 | +6.3% |
+
+**Assumptions:** (1) a redesign changes the Q4 drop-off and nothing else; (2) recovered sessions behave like the mobile sessions that already pass Q4; (3) same traffic as in the observed period. Assumption (2) is optimistic (people who would have stopped are probably less engaged), so 718 is an **upper bound**.
+
+---
+
+## Step 39: Campaigns at equal age
+
+**Why:** possible_risk is much more frequent in older groups (step 25), and 45plus reaches mostly people aged 45+ (88% of its sessions, 91% of those with a known age). Its advantage may partly reflect **who** it reaches.
+
+**Method:** direct age standardisation. Each campaign's rate in each age group is applied to the same age mix (all sessions).
+
+| Campaign | Sessions | Aged 45+ | Crude per 100 sessions | At equal age |
+|---|---|---|---|---|
+| diabetes_45plus | 3,337 | 88% | 14.8 | **13.0** |
+| diabetes_retargeting | 1,815 | 45% | 10.6 | 10.7 |
+| none | 14,081 | 44% | 8.4 | 8.6 |
+| diabetes_awareness_general | 3,422 | 44% | 7.9 | 7.9 |
+| diabetes_social_awareness | 3,345 | 18% | 4.2 | **5.4** |
+
+**Observations:**
+- About **30% of the lead of 45plus over the average** comes from the age of its audience.
+- 45plus vs social_awareness: **3.5× crude → 2.4× at equal age**.
+- Among people aged 45+ only, 45plus still brings 15.0 per 100 sessions, vs 10.6–13.3 for the other campaigns.
+
+**Conclusion:** an advantage **remains** at equal age, but it is smaller, and it is still not proof of a better campaign: 45plus may reach people with other risk factors (ad targeting, self-selection), and we have no costs and no booking data.
+
+**Revised recommendation:** *test* a budget shift towards 45plus with a controlled comparison (split by region or by period), and judge it on **cost per possible_risk result**, then on **cost per booked consultation**.
+
+---
+
+## Step 40: Email, new vs returning sessions
+
+**Why:** returning sessions complete much more (55% vs 40%). If a channel brings mostly returning sessions, its completion rate looks high for that reason alone.
+
+| Source | Returning share | New sessions | Returning sessions | All sessions |
+|---|---|---|---|---|
+| email | **77%** | 56.8% | 67.1% | 64.7% |
+| referral | 21% | 57.2% | 72.7% | 60.4% |
+| chatgpt | 22% | 50.3% | 62.2% | 52.9% |
+| google_organic | 20% | 40.8% | 52.2% | 43.1% |
+| google_ads | 19% | 36.8% | 48.7% | 39.0% |
+| social | 15% | 27.9% | 34.7% | 28.9% |
+
+**Conclusion:** about 8 points of email's completion come from its returning audience. On new sessions, email and referral are level (~57%) and still the best; social is still the weakest. **The ranking holds; the gaps shrink.** Channels should be compared on new and returning sessions separately.
+
+---
+
+## Step 41: Weekly trend, mix effect vs rate effect
+
+**Why:** step 27 shows +46% possible_risk results per 100 sessions in 8 weeks, at the same time as the 45plus launch. How much of it does the new campaign mix explain?
+
+| Week | All sessions | Without 45plus | No campaign only | Week-1 mix fixed |
+|---|---|---|---|---|
+| 1 June | 6.7 | 6.7 | 6.8 | 6.7 |
+| 29 June (45plus launch) | 8.9 | 8.1 | 8.6 | 7.8 |
+| 20 July | 9.8 | 8.3 | 9.1 | 8.0 |
+
+**Observations:**
+- Total rise: +3.1 points. With the campaign mix of week 1 fixed, the rise would be +1.3 points: **57% of the rise is a mix effect** (more 45plus and retargeting, less social_awareness), **43% is a rate effect**.
+- Even **without 45plus**, and even for sessions **without any campaign**, the metric rises.
+
+**Conclusion:** the 45plus launch is associated with most of the improvement, **but not all of it**: something else improved at the same time (page changes, seasonality, audience). The effect of the reallocation must be validated with a controlled test.
+
+---
+
+## Pipeline and automated checks (production thinking)
+
+**Why:** the notebook is good for exploring, not for running every day. The review noted some path dependence and limited production design.
+
+**What was added:**
+- The notebook finds the project root by itself: it runs from the root or from `notebook/`.
+- `sql/03_data_quality_checks.sql`: 12 checks, each returning the number of failing rows. **8 blocking errors** (one row per session, unique keys, one answer per question, referential integrity, completed ⇔ outcome, valid values) and **4 warnings** (5 answers without outcome, direct with campaign, under-18s, days with abnormally low volume, which flags 1 August).
+- `src/run_pipeline.py`: builds the clean tables, runs the checks, stops with exit code 1 on a blocking error, then exports the clean tables (`outputs/clean/`) and the weekly KPIs (`outputs/kpis_weekly.csv`).
+
+**What a production version would add:** scheduling (daily job or orchestrator such as Airflow/Dagster), incremental loading by date instead of full rebuilds, the same checks as tests in CI, alerts sent to the team when a warning appears, and a dashboard reading `kpis_weekly`.
+
+---
+
+# Phase 6: Answers to the four questions
 
 ## 1. What are the most important findings?
 
-1. **The landing page is the biggest leak: 35% of visitors leave without starting the questionnaire.** This represents 63% of all lost visitors. Overall, 43.7% of visitors reach a result (67.7% of those who start).
-2. **Q4 (physical activity) is the main drop-off inside the questionnaire, and it is mostly a mobile problem.** 13.5% of visitors stop at Q4 vs ~5% at the other questions; on mobile it reaches 16.9% vs 8.0% on desktop. Mobile is 65% of traffic: fixing Q4 on mobile would add ~700 results over the period (+6%).
-3. **Volume is not quality.** Paid sources bring the most traffic but complete below average (google_ads 39.0%, social 28.9%), while small sources complete best (email 64.7%, referral 60.4%, chatgpt 52.9%).
-4. **The right metric is at-risk profiles per 100 sessions, and diabetes_45plus wins by far.** 1 in 5 completers gets `possible_risk`, and this share rises with age (9.9% → 36.2%). diabetes_45plus brings 14.8 at-risk profiles per 100 sessions vs 4.2 for diabetes_social_awareness (average 8.8).
-5. **Performance improved over the period.** Traffic +68% and at-risk yield +46% in 8 weeks; the jump coincides with the launch of diabetes_45plus (week of 29 June) and the decline of social_awareness.
+1. **The landing page is the biggest leak: 35.5% of sessions end without starting the questionnaire** (33.5% of unique visitors never start). This represents 63% of all lost sessions. Overall, 43.7% of sessions reach a result (47.3% of unique visitors).
+2. **Q4 (physical activity) is the main drop-off inside the questionnaire, and it is concentrated on mobile.** 13.5% of sessions reaching Q4 stop there vs ~5% at the other questions; on mobile 16.9% vs 8.0% on desktop. The gap holds within every age group, source and new/returning segment (step 37), so it is not explained by audience composition. Its cause (display, context of use) remains a hypothesis. Scenario: if mobile matched desktop at Q4, up to ~700 more results over the period (+6%, upper bound).
+3. **Volume is not quality.** Paid sources bring the most sessions but complete below average (google_ads 39.0%, social 28.9%), while small sources complete best (email 64.7%, referral 60.4%, chatgpt 52.9%). Part of email's lead comes from returning sessions (77% of its sessions): on new sessions only it completes at 56.8%, still among the best (step 40).
+4. **possible_risk results per 100 sessions is a useful proposed metric, and diabetes_45plus leads on it.** 1 in 5 completions is `possible_risk`, and this share rises with age (9.9% → 36.2%). diabetes_45plus brings 14.8 per 100 sessions vs 4.2 for diabetes_social_awareness (average 8.8). **At equal age** the lead shrinks (13.0 vs 5.4, from 3.5× to 2.4×) but remains (step 39). Without cost and booking data, this is not yet a return-on-investment result.
+5. **Performance improved over the period.** Sessions grew +68% and possible_risk results per 100 sessions +46% in 8 weeks. About 60% of the rise comes from the change in campaign mix (launch of 45plus, decline of social_awareness); the rest comes from campaigns performing better, including sessions without a campaign (step 41). This is an association, not a measured causal effect.
 6. **The data is reliable after cleaning, with one major limit:** it only covers 1 June – 2 August 2026, not June–August.
 
 ## 2. Which questions remain unanswered?
 
-- **Why do 35% of visitors leave the landing page?** There is no data on load time, scroll depth or time spent on the page.
-- **Is the Q4 drop-off really a mobile display issue?** The device gap strongly suggests it, but only a UX review or an A/B test of a redesigned Q4 can confirm it.
-- **Did diabetes_45plus cause the quality improvement?** It is a correlation in time; other changes (page, seasonality) may have happened at the same time.
-- **What happens after the result?** We do not know whether `possible_risk` visitors book a consultation, which is the real business outcome for Doctoome.
-- **Which channels are the most cost-efficient?** Without campaign costs, no cost per completion or per at-risk profile can be computed.
+- **Why do 35% of sessions end on the landing page?** We have no data on load time, scroll depth or time spent on the page.
+- **Why is the Q4 drop-off higher on mobile?** The gap is not explained by age, source or returning status (step 37), but display, screen size or context of use cannot be told apart with this data. A UX review and an A/B test of a redesigned Q4 are needed.
+- **Did diabetes_45plus cause the quality improvement, and is it cost-effective?** It accounts for about 60% of the rise (step 41) and keeps a lead at equal age (step 39), but it may reach people with other risk factors, and we have no costs. A controlled test (split by region or period) is needed.
+- **What happens after the result?** We do not know whether people with a `possible_risk` result book a consultation, which is the real business outcome for Doctoome.
+- **Which channels are the most cost-efficient?** Without campaign costs, we cannot compute a cost per completion or per possible_risk result.
 - **Why does the data stop on 2 August, with 1 August already abnormally low?** Extraction limit or tracking incident?
 - **Are some attributions wrong?** 219 `direct` sessions carry a campaign, `other` is undefined, and 105 sessions answered all 5 questions without an outcome (abandonment or tracking bug).
 
@@ -567,10 +719,10 @@ It combines both losses: visitors who do not complete count as 0, and completers
 
 | Data | Why |
 |---|---|
-| **Post-result actions**: click on "book a consultation", appointment booked, consultation held | Measure the real business conversion, especially for `possible_risk` profiles |
-| **Campaign costs** (spend, impressions, clicks) | Compute cost per completion and per at-risk profile for each channel |
-| **Landing page behaviour**: load time, scroll depth, time on page, clicks on the start button, errors | Understand the 35% who leave before starting |
-| **Questionnaire UX**: screen size, browser, "back" clicks, time per question | Confirm the mobile display hypothesis for Q4 |
+| **Post-result actions**: click on "book a consultation", appointment booked, consultation held | Measure the real business conversion, especially after a `possible_risk` result |
+| **Campaign costs** (spend, impressions, clicks) | Compute cost per completion and cost per possible_risk result per channel |
+| **Landing page behaviour**: load time, scroll depth, time on page, clicks on the start button, JS errors | Understand the 35% of sessions that end before starting |
+| **Questionnaire UX**: screen size, browser, "back" clicks, time spent per question | Test the mobile display hypothesis for Q4 |
 | **Questionnaire / page version ID** | Run and analyse A/B tests properly |
 | **Full UTM parameters** (source, medium, campaign, content, term) and referrer | Remove attribution ambiguities (`google`, `direct` with campaign, `other`, AI assistants) |
 | **The complete August data** + tracking completeness logs | Analyse the full period and detect tracking incidents |
@@ -579,18 +731,18 @@ It combines both losses: visitors who do not complete count as 0, and completers
 
 ## 4. What would you track if the questionnaire stayed live for 12 months?
 
-**North-star metric:** **at-risk (`possible_risk`) profiles per 100 sessions** — then, once measured, **appointments booked per 100 sessions**.
+**Proposed north-star metric:** **`possible_risk` results per 100 sessions**, as a working proxy, to be replaced by **consultations booked per 100 sessions** once bookings are tracked. Treating it as the primary business metric is an assumption until its link with downstream value is measured.
 
 | Area | KPIs |
 |---|---|
-| **Funnel** | Landing → start rate; completion rate (overall and among starters); drop-off rate per question; mobile vs desktop gap at Q4 |
-| **Acquisition** | Sessions, completion rate and at-risk profiles per 100 sessions **by channel and campaign**; cost per completion and per at-risk profile (once costs are available); share of traffic from AI assistants |
-| **Outcomes** | Distribution of the 3 categories; `possible_risk` share by age group; share of visitors aged 45+ |
-| **Business** | Booking rate among `possible_risk` profiles; booking → consultation held |
-| **Data quality (alerts)** | Daily event volume (alert on sudden drops, as on 1–2 August); % of sessions with 5 answers but no outcome; % of unmapped source values; % of missing demographics; % of duplicate answers |
+| **Funnel** | Landing → start rate, per session and per unique visitor; completion rate (overall and among starters); drop-off rate per question; mobile vs desktop gap at Q4 |
+| **Acquisition** | Sessions, completion rate and possible_risk results per 100 sessions **by channel and campaign, for new and returning sessions separately, and age-adjusted**; cost per completion and per possible_risk result (once costs are available); share of traffic from AI assistants |
+| **Outcomes** | Distribution of the 3 categories; `possible_risk` share by age group; share of sessions aged 45+; possible_risk results per unique person |
+| **Business** | Consultation booking rate after a `possible_risk` result; booking → consultation held |
+| **Data quality (alerts)** | Daily volume of events (alert on sudden drops, as on 1–2 August); % sessions with 5 answers but no outcome; % unmapped source values; % missing demographics; % duplicate answers |
 | **Seasonality & tests** | Month-over-month trends (summer vs autumn, World Diabetes Day on 14 November); results of A/B tests on the landing page and Q4 |
 
-**Cadence:** a weekly dashboard for the marketing and product teams, a monthly review of channel allocation, and automated data quality alerts.
+**Cadence:** the weekly KPIs are already produced by `src/run_pipeline.py` (`outputs/kpis_weekly.csv`); in production: a weekly dashboard for the marketing and product teams, a monthly review of channel allocation, and automated alerts on data quality.
 
 ---
 
@@ -602,7 +754,11 @@ It combines both losses: visitors who do not complete count as 0, and completers
 - When an answer is changed, **the latest one** is kept.
 - Questions are answered **in order** (3 answers = Q1, Q2 and Q3).
 - Weekly trends use only the **8 complete weeks** (1 June → 26 July).
-- In the "at-risk profiles per 100 sessions" metric, a session **without a result counts as 0**.
+- In the "possible_risk results per 100 sessions" metric, a session **without a result counts as 0**.
 - Age is computed as **2026 − birth year**; 42 visitors are under 18.
-- The quality increase after the 45plus launch is a **correlation**, not a proof.
+- Rates are **per session**; one visitor can have several sessions (visitor-level figures in Phase 5).
+- Adjustments cover the variables available (age, source, returning status, campaign mix); unobserved differences (intent, browser, other risk factors) may remain.
+- Neither the Q4/mobile gap nor the effect of 45plus is a measured **causal** effect; both call for a controlled test.
+- possible_risk results per 100 sessions is a **proposed proxy KPI**, not a validated business metric.
+- The data is synthetic: patterns resembling medical facts do not validate the questionnaire.
 - **No cost data:** channels are evaluated on outcomes, not on cost-efficiency.

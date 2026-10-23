@@ -51,7 +51,7 @@ SELECT
         ELSE '75+'
     END AS age_group
 
-FROM '../data/visitors.parquet';
+FROM 'data/visitors.parquet';
 
 -- -----------------------------------------------------
 -- 2. sessions_clean
@@ -87,7 +87,7 @@ SELECT
     (acquisition_source = 'direct' AND campaign_name IS NOT NULL) AS flag_direct_with_campaign,
     (CAST(session_started_at AS DATE) > DATE '2026-07-31')        AS flag_incomplete_period
 
-FROM '../data/sessions.parquet';
+FROM 'data/sessions.parquet';
 
 -- -----------------------------------------------------
 -- 3. answers_clean
@@ -105,7 +105,7 @@ FROM (
                               ORDER BY answered_at DESC) AS answer_rank,
            -- total number of answers for this session and question
            COUNT(*)     OVER (PARTITION BY session_id, question_number) AS nb_answers
-    FROM '../data/questionnaire_answers.parquet'
+    FROM 'data/questionnaire_answers.parquet'
 )
 WHERE answer_rank = 1;
 
@@ -121,7 +121,7 @@ WITH events_per_session AS (
            BOOL_OR(event_type = 'questionnaire_start')    AS has_started,
            MIN(event_timestamp) FILTER (WHERE event_type = 'questionnaire_start') AS started_at,
            MAX(question_number) FILTER (WHERE event_type = 'question_view')       AS last_question_viewed
-    FROM '../data/questionnaire_events.parquet'
+    FROM 'data/questionnaire_events.parquet'
     GROUP BY session_id
 ),
 answers_per_session AS (
@@ -162,4 +162,4 @@ FROM sessions_clean s
 LEFT JOIN visitors_clean v         USING (visitor_id)
 LEFT JOIN events_per_session e     USING (session_id)
 LEFT JOIN answers_per_session r    USING (session_id)
-LEFT JOIN '../data/questionnaire_outcomes.parquet' o USING (session_id);
+LEFT JOIN 'data/questionnaire_outcomes.parquet' o USING (session_id);
